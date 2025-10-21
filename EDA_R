@@ -1,0 +1,63 @@
+
+library(tidyverse)
+library(corrr)
+library(GGally)
+
+player_data <- read_csv("Data/Merged_stats_wrc.csv")
+
+print("Initial structure")
+glimpse(player_data)
+
+id_columns <- c("player name", "player_id", "year")
+
+player_data <- player_data %>%
+  mutate(across(
+    .cols = -all_of(id_columns),
+    .fns = ~ as.numeric(as.character(.))
+  ))
+
+print("Structure of data after forcing numeric conversion:")
+glimpse(player_data)
+
+player_data <- player_data %>%
+  rename(wRC_plus = `WRC+`) %>%
+  filter(year == 2024) %>%
+  drop_na()
+
+numeric_data <- player_data %>%
+  select(where(is.numeric), -player_id, -year)
+
+
+cor_matrix <- numeric_data %>%
+  correlate()
+
+top_predictors <- cor_matrix %>%
+  focus(wRC_plus) %>%
+  arrange(desc(abs(wRC_plus))) %>%
+  head(11)
+
+print("Top 10 predictors most correlated with wRC+:")
+print(top_predictors)
+
+top_predictor_names <- top_predictors$term
+
+top_vars_plot <- player_data %>%
+  select(all_of(top_predictor_names)) %>%
+  ggpairs(
+    title = "Scatterplot Matrix of Top Predictors for wRC+",
+    upper = list(continuous = wrap("cor", size = 3)),
+    lower = list(continuous = wrap("points", alpha = 0.5, size = 0.5))
+  )
+
+print(top_vars_plot)
+
+predictor_formula <- as.formula(
+  paste("wRC_plus ~", paste(top_predictor_names[-1], collapse = " + "))
+)
+
+wrc_model <- lm(predictor_formula, data = player_data)
+
+print("Summary of the Multiple Linear Regression Model:")
+summary(wrc_model)
+
+
