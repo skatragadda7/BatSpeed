@@ -1,0 +1,65 @@
+---
+title: "Model Building"
+output: html_document
+date: "2025-10-30"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(olsrr)
+library(tidyverse)
+player_data <- read.csv('Combined_All_Data.csv')
+names(player_data)
+
+train_data <- player_data %>% filter(year==2024)
+
+
+## try a variable screening first
+
+mod1 <- lm(woba~k_percent+bb_percent+isolated_power+avg_swing_speed+avg_swing_length
+           +attack_angle+exit_velocity_avg+launch_angle_avg+sweet_spot_percent+barrel_batted_rate+
+             hard_hit_percent+avg_bat_speed+oz_swing_percent+meatball_swing_percent+flyballs_percent+
+             pull_percent+hard_hit_percent,data=train_data)
+
+ols_step_forward_p(mod1,p_ent=0.05,details=F)
+```
+
+```{r}
+mod1 <- lm(woba~k_percent+bb_percent+isolated_power+avg_swing_speed+avg_swing_length
+           +attack_angle+exit_velocity_avg+launch_angle_avg+sweet_spot_percent+barrel_batted_rate+
+             hard_hit_percent+avg_bat_speed+oz_swing_percent+meatball_swing_percent+flyballs_percent+
+             pull_percent+hard_hit_percent,data=train_data)
+
+ols_step_backward_p(mod1,details=F)
+```
+
+```{r}
+mod1 <- lm(woba~k_percent+bb_percent+isolated_power+avg_swing_speed+avg_swing_length
+           +attack_angle+exit_velocity_avg+launch_angle_avg+sweet_spot_percent+barrel_batted_rate+
+             hard_hit_percent+avg_bat_speed+oz_swing_percent+meatball_swing_percent+flyballs_percent+
+             pull_percent+hard_hit_percent,data=train_data)
+
+ols_step_both_p(mod1,details=F)
+```
+
+## Trying Multivariate Regression Early On
+
+```{r}
+mod_multi <- lm(
+  cbind(woba, WRC.) ~ k_percent + bb_percent + isolated_power + avg_swing_speed + avg_swing_length +
+    attack_angle + exit_velocity_avg + launch_angle_avg + sweet_spot_percent + 
+    barrel_batted_rate + hard_hit_percent + avg_bat_speed + oz_swing_percent + 
+    meatball_swing_percent + flyballs_percent + pull_percent,
+  data = train_data
+)
+
+
+summary(mod_multi)
+```
+
+
+
+
