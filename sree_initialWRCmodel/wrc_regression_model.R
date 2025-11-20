@@ -1,266 +1,203 @@
-# WRC+ Regression Model
+# ============================================================================
+# WRC+ Regression Model (OLS, Ridge, LASSO, Elastic Net)
+# ============================================================================
 # Training on 2024 data, testing on 2025 data
+# ============================================================================
 
 library(tidyverse)
 library(corrr)
 library(broom)
 library(ggplot2)
 library(janitor)
+library(glmnet)
 
-player_data <- read_csv("Data/Merged_stats_wrc.csv")
-player_data <- player_data %>%
-  clean_names() %>%
-  mutate(across(
-    .cols = -c(player_name, player_id, year),
-    .fns = ~ as.numeric(as.character(.))
-  )) %>%
-  rename(wrc_plus = wrc)
+# ============================================================================
+# Helper Functions
+# ============================================================================
 
-cat("\nMissing values by year:\n")
-player_data %>%
-  group_by(year) %>%
-  summarise(across(everything(), ~sum(is.na(.))), .groups = 'drop') %>%
-  pivot_longer(-year, names_to = "variable", values_to = "missing_count") %>%
-  filter(missing_count > 0) %>%
-  arrange(desc(missing_count))
+load_and_clean_data <- function(filepath) {
+  if (!file.exists(filepath)) {
+    stop(paste("Could not find", filepath, "in the current directory"))
+  }
 
-# Filter for 2024 2025 data
+  cat("Loaded data from:", filepath, "\n")
+  data <- read.csv(filepath, na.strings = c("", "NA"), stringsAsFactors = FALSE)
+
+  data <- data %>%
+    clean_names() %>%
+    mutate(across(
+      .cols = -c(player_name, player_id, year),
+      .fns = ~ {
+        if (is.logical(.)) {
+          as.numeric(.)
+        } else {
+          suppressWarnings(as.numeric(as.character(.)))
+        }
+      }
+    ))
+
+  # Standardize response variable name
+  if (!"wrc_plus" %in% names(data)) {
+    if ("wrc" %in% names(data)) {
+      data <- data %>% rename(wrc_plus = wrc)
+    } else if ("wrc." %in% names(data)) {
+      data <- data %>% rename(wrc_plus = wrc.)
+    }
+  }
+
+  return(data)
+}
+
+get_predictors <- function(data) {
+  # Use the same potential predictors as the XGBoost model for consistency
+  potential_predictors <- c(
+    "k_percent", "bb_percent", "on_base_percent", "isolated_power", "woba",
+    "avg_swing_speed", "attack_angle", "exit_velocity_avg", "launch_angle_avg",
+    "barrel_batted_rate", "hard_hit_percent", "z_swing_percent", "oz_swing_percent",
+    "meatball_swing_percent", "whiff_percent", "flyballs_percent", "linedrives_percent"
+  )
+
+  available <- intersect(potential_predictors, names(data))
+  return(available)
+}
+
+train_glmnet_model <- function(x_train, y_train, alpha, model_name) {
+  cat(paste0("\nTraining ", model_name, " (alpha=", alpha, ")...\n"))
+
+  set.seed(2024)
+  cv_model <- cv.glmnet(
+    x = x_train,
+    y = y_train,
+    alpha = alpha,
+    nfolds = 10,
+    standardize = TRUE,
+    family = "gaussian"
+  )
+
+  cat("Best lambda:", cv_model$lambda.min, "\n")
+  return(cv_model)
+}
+
+evaluate_model <- function(actual, predicted, model_name) {
+  r2 <- cor(actual, predicted)^2
+  rmse <- sqrt(mean((actual - predicted)^2))
+  mae <- mean(abs(actual - predicted))
+
+  return(data.frame(
+    Model = model_name,
+    R2 = round(r2, 4),
+    RMSE = round(rmse, 4),
+    MAE = round(mae, 4)
+  ))
+}
+
+# ============================================================================
+# Main Execution
+# ============================================================================
+
+# 1. Load Data
+# Using onlyCompleteData.csv as Merged_stats_wrc.csv was missing
+data_path <- "onlyCompleteData.csv"
+# Adjust path if running from subdirectory
+if (!file.exists(data_path) && file.exists(paste0("../", data_path))) {
+  data_path <- paste0("../", data_path)
+}
+
+player_data <- load_and_clean_data(data_path)
+predictors <- get_predictors(player_data)
+response_var <- "wrc_plus"
+
+# 2. Split Data
+# For linear models, we generally need to handle NAs.
+# Dropping rows with NAs in predictors or response.
+cols_to_keep <- c("player_name", "player_id", "year", response_var, predictors)
+
 train_data <- player_data %>%
   filter(year == 2024) %>%
+  select(all_of(cols_to_keep)) %>%
   drop_na()
 
 test_data <- player_data %>%
   filter(year == 2025) %>%
+  select(all_of(cols_to_keep)) %>%
   drop_na()
 
 cat("\nTraining data (2024):", nrow(train_data), "players\n")
 cat("Testing data (2025):", nrow(test_data), "players\n")
 
-# Find common players between 2024 and 2025
-common_players <- intersect(train_data$player_id, test_data$player_id)
-cat("Common players between years:", length(common_players), "\n")
+# 3. Prepare Matrices for GLMNET
+x_train <- as.matrix(train_data[, predictors])
+y_train <- train_data[[response_var]]
+x_test <- as.matrix(test_data[, predictors])
+y_test <- test_data[[response_var]]
 
-numeric_vars <- train_data %>%
-  select(where(is.numeric), -player_id, -year)
-cor_matrix <- numeric_vars %>%
-  correlate()
+# 4. Train Models
 
-# Find top 10 predictors most correlated with WRC+
-top_predictors <- cor_matrix %>%
-  focus(wrc_plus) %>%
-  arrange(desc(abs(wrc_plus))) %>%
-  head(11) %>%  
-  filter(term != "wrc_plus") %>%  
-  head(10)  
+# --- OLS (Baseline) ---
+# Using all predictors
+f <- as.formula(paste(response_var, "~", paste(predictors, collapse = " + ")))
+ols_model <- lm(f, data = train_data)
+ols_pred <- predict(ols_model, newdata = test_data)
 
-cat("\nTop 10 predictors for WRC+:\n")
-print(top_predictors)
+# --- Ridge (Alpha = 0) ---
+ridge_model <- train_glmnet_model(x_train, y_train, alpha = 0, "Ridge")
+ridge_pred <- as.numeric(predict(ridge_model, s = "lambda.min", newx = x_test))
 
-# Create formula for regression
-predictor_names <- top_predictors$term
-formula_str <- paste("wrc_plus ~", paste(predictor_names, collapse = " + "))
-cat("\nRegression formula:\n", formula_str, "\n")
+# --- LASSO (Alpha = 1) ---
+lasso_model <- train_glmnet_model(x_train, y_train, alpha = 1, "LASSO")
+lasso_pred <- as.numeric(predict(lasso_model, s = "lambda.min", newx = x_test))
 
-# Fit the model on 2024 data
-model <- lm(as.formula(formula_str), data = train_data)
+# --- Elastic Net (Alpha = 0.5) ---
+enet_model <- train_glmnet_model(x_train, y_train, alpha = 0.5, "Elastic Net")
+enet_pred <- as.numeric(predict(enet_model, s = "lambda.min", newx = x_test))
 
-# Model summary
-model_summary <- summary(model)
-print(model_summary)
+# 5. Evaluate and Compare
+results <- rbind(
+  evaluate_model(y_test, ols_pred, "OLS"),
+  evaluate_model(y_test, ridge_pred, "Ridge"),
+  evaluate_model(y_test, lasso_pred, "LASSO"),
+  evaluate_model(y_test, enet_pred, "Elastic Net")
+)
 
-# Residuals vs Fitted
-residual_plot <- ggplot(data = data.frame(
-  fitted = fitted(model),
-  residuals = residuals(model)
-), aes(x = fitted, y = residuals)) +
-  geom_point(alpha = 0.6) +
-  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
-  geom_smooth(se = FALSE, color = "blue") +
-  labs(title = "Residuals vs Fitted Values",
-       x = "Fitted Values", y = "Residuals") +
-  theme_minimal()
+cat("\n=== Model Comparison (2025 Test Data) ===\n")
+print(results)
 
-print(residual_plot)
+# 6. Inspect LASSO Coefficients (Feature Selection)
+cat("\n=== LASSO Selected Features (Non-zero Coefficients) ===\n")
+lasso_coefs <- coef(lasso_model, s = "lambda.min")
+# Convert sparse matrix to regular matrix and filter
+lasso_coefs_df <- data.frame(
+  Term = rownames(lasso_coefs),
+  Estimate = as.numeric(lasso_coefs)
+) %>%
+  filter(Estimate != 0, Term != "(Intercept)") %>%
+  arrange(desc(abs(Estimate)))
 
-# Q-Q plot for normality
-qq_plot <- ggplot(data = data.frame(residuals = residuals(model)), 
-                  aes(sample = residuals)) +
-  stat_qq() +
-  stat_qq_line(color = "red") +
-  labs(title = "Q-Q Plot of Residuals") +
-  theme_minimal()
+print(lasso_coefs_df)
 
-print(qq_plot)
-
-# Predict on 2025 data
-test_predictions <- predict(model, newdata = test_data)
-
-
-actual_2025 <- test_data$wrc_plus
-predicted_2025 <- test_predictions
-r_squared_2025 <- cor(actual_2025, predicted_2025)^2
-rmse_2025 <- sqrt(mean((actual_2025 - predicted_2025)^2))
-mae_2025 <- mean(abs(actual_2025 - predicted_2025))
-
-results_df <- data.frame(
+# 7. Save Best Predictions (assuming LASSO or Elastic Net is usually best, but let's save LASSO)
+final_results_df <- data.frame(
   player_name = test_data$player_name,
-  actual_wrc_plus = actual_2025,
-  predicted_wrc_plus = predicted_2025,
-  residual = actual_2025 - predicted_2025
+  actual_wrc_plus = y_test,
+  predicted_wrc_plus = lasso_pred,
+  residual = y_test - lasso_pred
 ) %>%
   arrange(desc(abs(residual)))
 
-cat("R-squared:", round(r_squared_2025, 4), "\n")
-cat("RMSE:", round(rmse_2025, 4), "\n")
-cat("MAE:", round(mae_2025, 4), "\n")
+write_csv(final_results_df, "wrc_predictions_lasso_2025.csv")
+cat("\nLASSO predictions saved to 'wrc_predictions_lasso_2025.csv'\n")
 
-
-prediction_plot <- ggplot(results_df, aes(x = actual_wrc_plus, y = predicted_wrc_plus)) +
+# 8. Plot Best Model
+p <- ggplot(final_results_df, aes(x = actual_wrc_plus, y = predicted_wrc_plus)) +
   geom_point(alpha = 0.7) +
   geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
   geom_smooth(method = "lm", se = TRUE, color = "blue") +
-  labs(title = "Predicted vs Actual WRC+ (2025 Data)",
-       x = "Actual WRC+", y = "Predicted WRC+",
-       subtitle = paste("R² =", round(r_squared_2025, 3))) +
-  theme_minimal()
-
-print(prediction_plot)
-
-# Show predictions
-print(head(results_df, 10))
-print(tail(results_df, 10))
-
-# Model coefficients
-coef_df <- tidy(model) %>%
-  arrange(desc(abs(estimate)))
-print(coef_df)
-
-# Save results
-write_csv(results_df, "wrc_predictions_2025.csv")
-cat("\nResults saved to 'wrc_predictions_2025.csv'\n")
-
-# Summary statistics
-cat("Training R-squared (2024):", round(model_summary$r.squared, 4), "\n")
-cat("Training Adjusted R-squared (2024):", round(model_summary$adj.r.squared, 4), "\n")
-cat("Test R-squared (2025):", round(r_squared_2025, 4), "\n")
-cat("Test RMSE (2025):", round(rmse_2025, 4), "\n")
-cat("Test MAE (2025):", round(mae_2025, 4), "\n")
-
-# ===========================
-# RIDGE REGRESSION ADD-ON (CV on 2024, predict 2025)
-# ===========================
-
-install.packages("glmnet")
-
-library(glmnet)
-if (!exists("predictor_names")) {
-  numeric_vars_ridge <- train_data %>%
-    select(where(is.numeric), -player_id, -year)
-  cor_matrix_ridge <- cor(numeric_vars_ridge, use = "pairwise.complete.obs")
-  # pick top 10 absolute correlations with wrc_plus (excluding itself)
-  cor_target <- sort(abs(cor_matrix_ridge[,"wrc_plus"]), decreasing = TRUE)
-  predictor_names <- setdiff(names(cor_target)[2:11], "wrc_plus")
-}
-
-# Build design matrices (glmnet needs matrix; it will one-hot any factors)
-ridge_x_train <- model.matrix(
-  reformulate(predictor_names), data = train_data
-)[, -1, drop = FALSE]   # drop intercept column
-ridge_y_train <- train_data$wrc_plus
-
-ridge_x_test <- model.matrix(
-  reformulate(predictor_names), data = test_data
-)[, -1, drop = FALSE]
-
-set.seed(2024)
-ridge_cv <- cv.glmnet(
-  x = ridge_x_train,
-  y = ridge_y_train,
-  alpha = 0,           # alpha = 0 → RIDGE
-  nfolds = 10,
-  standardize = TRUE,  # default TRUE; explicit for clarity
-  family = "gaussian"
-)
-# lambda best to use
-cat("\n[Ridge] Best lambda (min):", ridge_cv$lambda.min, "\n")
-cat("[Ridge] 1-SE lambda:", ridge_cv$lambda.1se, "\n")
-
-# Prediction for 2025 with both lambda involved
-ridge_pred_min <- as.numeric(predict(ridge_cv, s = "lambda.min", newx = ridge_x_test))
-ridge_pred_1se <- as.numeric(predict(ridge_cv, s = "lambda.1se", newx = ridge_x_test))
-
-# accuracy of RMSE, MAE and R2
-ridge_rmse <- function(actual, pred) sqrt(mean((actual - pred)^2))
-ridge_mae  <- function(actual, pred) mean(abs(actual - pred))
-ridge_r2   <- function(actual, pred) cor(actual, pred)^2
-
-ridge_actual_2025 <- test_data$wrc_plus
-#creation of scalar, 
-ridge_r2_min  <- ridge_r2(ridge_actual_2025, ridge_pred_min)
-ridge_rmse_min<- ridge_rmse(ridge_actual_2025, ridge_pred_min)
-ridge_mae_min <- ridge_mae(ridge_actual_2025, ridge_pred_min)
-
-ridge_r2_1se  <- ridge_r2(ridge_actual_2025, ridge_pred_1se)
-ridge_rmse_1se<- ridge_rmse(ridge_actual_2025, ridge_pred_1se)
-ridge_mae_1se <- ridge_mae(ridge_actual_2025, ridge_pred_1se)
-#print the performance of each 
-cat("\n[Ridge @ lambda.min]  R^2:", round(ridge_r2_min, 4),
-    " RMSE:", round(ridge_rmse_min, 4),
-    " MAE:", round(ridge_mae_min, 4), "\n")
-
-cat("[Ridge @ lambda.1se] R^2:", round(ridge_r2_1se, 4),
-    " RMSE:", round(ridge_rmse_1se, 4),
-    " MAE:", round(ridge_mae_1se, 4), "\n")
-
-# Make result table (lambda.min by default)
-ridge_results_df <- tibble(
-  player_name = test_data$player_name,
-  actual_wrc_plus = ridge_actual_2025,
-  predicted_wrc_plus_ridge = ridge_pred_min,
-  residual_ridge = actual_wrc_plus - predicted_wrc_plus_ridge
-) %>%
-  arrange(desc(abs(residual_ridge)))
-
-# Pred vs Actual plot (lambda.min)
-ridge_pred_plot <- ggplot(
-  ridge_results_df,
-  aes(x = actual_wrc_plus, y = predicted_wrc_plus_ridge)
-) +
-  geom_point(alpha = 0.7) +
-  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
-  geom_smooth(method = "lm", se = TRUE) +
   labs(
-    title = "Ridge: Predicted vs Actual WRC+ (2025, λ = lambda.min)",
+    title = "LASSO: Predicted vs Actual WRC+ (2025 Data)",
     x = "Actual WRC+",
     y = "Predicted WRC+",
-    subtitle = paste0("R² = ", round(ridge_r2_min, 3),
-                      " | RMSE = ", round(ridge_rmse_min, 3),
-                      " | MAE = ", round(ridge_mae_min, 3))
+    subtitle = paste("R² =", results[results$Model == "LASSO", "R2"])
   ) +
   theme_minimal()
-print(ridge_pred_plot)
 
-# Coefficients of lambda.min and terms by estimate
-ridge_coef_mat <- as.matrix(coef(ridge_cv, s = "lambda.min"))
-ridge_coef_df <- tibble(
-  term = rownames(ridge_coef_mat),
-  estimate = as.numeric(ridge_coef_mat[,1])
-) %>%
-  filter(term != "(Intercept)") %>%
-  arrange(desc(abs(estimate)))
-
-cat("\n[Ridge] Coefficients (lambda.min):\n")
-print(ridge_coef_df)
-
-# Side-by-side of old, lambda min and 1se(simpler model, more stability, less precise)
-if (exists("r_squared_2025") && exists("rmse_2025") && exists("mae_2025")) {
-  ridge_compare <- tibble::tibble(
-    metric = c("R2", "RMSE", "MAE"),
-    OLS = c(round(r_squared_2025, 4), round(rmse_2025, 4), round(mae_2025, 4)),
-    Ridge_lambda_min = c(round(ridge_r2_min, 4), round(ridge_rmse_min, 4), round(ridge_mae_min, 4)),
-    Ridge_lambda_1se = c(round(ridge_r2_1se, 4), round(ridge_rmse_1se, 4), round(ridge_mae_1se, 4))
-  )
-  cat("\nComparison (OLS vs Ridge):\n")
-  print(ridge_compare)
-}
-
+print(p)
