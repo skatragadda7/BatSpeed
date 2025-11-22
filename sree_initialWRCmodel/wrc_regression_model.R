@@ -51,7 +51,7 @@ load_and_clean_data <- function(filepath) {
 get_predictors <- function(data) {
   # Use the same potential predictors as the XGBoost model for consistency
   potential_predictors <- c(
-    "k_percent", "bb_percent", "on_base_percent", "isolated_power", "woba",
+    "k_percent", "bb_percent", "on_base_percent", "isolated_power",
     "avg_swing_speed", "attack_angle", "exit_velocity_avg", "launch_angle_avg",
     "barrel_batted_rate", "hard_hit_percent", "z_swing_percent", "oz_swing_percent",
     "meatball_swing_percent", "whiff_percent", "flyballs_percent", "linedrives_percent"
