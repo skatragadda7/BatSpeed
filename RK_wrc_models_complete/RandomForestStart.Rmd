@@ -1,0 +1,179 @@
+---
+title: "Random Forest Capstone"
+output:
+  pdf_document: default
+  html_document: default
+date: "2025-10-23"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Running the Code
+
+```{r,message=F}
+library(randomForest)
+library(tidyverse)
+
+#fangraphs <- read.csv('fangraphs-leaderboards.csv')
+#fangraphs <- fangraphs %>% select(Season, Name, wRC., ) %>% filter(Season %in% c("2024", "2025")) %>% arrange(Name, Season)
+#head(fangraphs)
+
+#indep_vars_data <- read.csv('onlyCompleteData.csv')
+#indep_vars_data <- indep_vars_data %>% select(player.name:player_age, k_percent, isolated_power, avg_swing_speed, squared_up_contact, 
+                                              #avg_swing_length, attack_angle, ideal_angle_rate, exit_velocity_avg, 
+                                              #launch_angle_avg, sweet_spot_percent, barrel_batted_rate, hard_hit_percent, 
+                                              #z_swing_percent, oz_swing_percent, meatball_swing_percent, whiff_percent, 
+                                              #pull_percent, straightaway_percent, opposite_percent, groundballs_percent, flyballs_percent, linedrives_percent, popups_percent) %>% select(-WRC.)
+#head(indep_vars_data)
+
+#data1 <- indep_vars_data %>% left_join(fangraphs, by = c("player.name" = "Name", "year" = "Season")) %>% relocate(wRC., .before = "k_percent") %>% rename(WRC. = wRC.) %>% distinct()
+#head(data1)
+
+data1 <- read.csv("onlyCompleteData.csv")
+
+
+train <- data1 %>% filter(year == "2024")
+test <- data1 %>% filter(year == "2025")
+
+train <- train %>% select(-c(player.name:player_age), WRC.) 
+test <- test %>% select(-c(player.name:player_age), WRC.) 
+
+
+mtry_val <- 6
+ntree_values <- c(1,5,10, 25, 50, 100, 200, 500,1000)
+n_reps <- 20
+
+results <- data.frame(ntree=integer(),seed=integer(),test_MSE=double(),OOB_error=double())
+
+for (nt in ntree_values) { # goes through all different ntree values
+  for (s in 1:n_reps) { # do many times for each ntree
+    set.seed(s)
+    rf_model <- randomForest(WRC. ~ ., data=train, mtry=mtry_val, ntree=nt)
+    yhat.bag <- predict(rf_model, newdata=test)
+    test_mse <- mean((yhat.bag - test$WRC.)^2)
+    results <- rbind(results, data.frame(ntree=nt,test_MSE=test_mse,OOB_error=rf_model$mse[nt]))
+  }
+}
+
+results_all <- results %>% group_by(ntree) %>%summarize(mean_test_MSE = mean(test_MSE),sd_test_MSE = sd(test_MSE),
+            mean_OOB_error = mean(OOB_error),sd_OOB_error = sd(OOB_error))
+```
+
+```{r}
+ggplot(results_all, aes(x=ntree)) + geom_errorbar(aes(ymin=mean_test_MSE-sd_test_MSE, ymax=mean_test_MSE+sd_test_MSE),
+                width=20, color="blue") +geom_line(aes(y=mean_test_MSE), color="blue") + geom_point(aes(y=mean_test_MSE), color="blue") +
+  geom_line(aes(y=mean_OOB_error), color="red",linetype="dashed") +
+  geom_point(aes(y=mean_OOB_error), color="red") +
+  labs(title="Effect of ntree on Random Forest Performance",x="Number of Trees (ntree)",y="Error",caption="Blue: Test MSE ± SD, Red dashed: OOB error") +
+  theme_minimal()
+
+results_all
+```
+
+
+
+
+```{r}
+# Packages
+library(randomForest)
+library(ggplot2)
+
+
+set.seed(1)
+N <- nrow(data1)
+train <- which(data1$year == 2024)
+
+mlb.train <- data1[train, ]
+mlb.test  <- data1[-train, ]
+
+# Response vectors
+y.test <- mlb.test$WRC.
+
+set.seed(1)
+bag.mlb <- randomForest(WRC. ~ ., data = (data1 %>% select(-year)),
+                           subset = train, mtry = 12,
+                           importance = TRUE)
+bag.mlb
+
+yhat.bag <- predict(bag.mlb, newdata = mlb.test)
+
+# Test MSE
+mse_bag <- mean((yhat.bag - y.test)^2)
+mse_bag
+
+# Plot predicted vs observed
+plot(yhat.bag, y.test,
+     xlab = "Predicted WRC",
+     ylab = "Observed WRC",
+     main = "Bagging: Predicted vs Observed (Test)")
+abline(0, 1)
+
+set.seed(1)
+rf.mlb <- randomForest(WRC. ~ ., data = (data1 %>% select(-year)),
+                          subset = train, mtry = 6,
+                          importance = TRUE)
+
+yhat.rf <- predict(rf.mlb, newdata = mlb.test)
+mse_rf <- mean((yhat.rf - y.test)^2)
+c(mse_bag = mse_bag, mse_rf = mse_rf)
+
+importance(rf.mlb)
+varImpPlot(rf.mlb, main = "Random Forest Variable Importance")
+
+set.seed(2)
+tune.out <- tuneRF(x = mlb.train[, setdiff(names(data1 %>% select(-year)), "WRC.")],
+                   y = mlb.train$WRC.,
+                   stepFactor = 1.5,
+                   improve = 0.01,
+                   ntreeTry = 500,
+                   trace = TRUE,
+                   plot = TRUE)
+
+# Best mtry from tuneRF (lower OOB error is better)
+best.mtry <- tune.out[which.min(tune.out[, "OOBError"]), "mtry"]
+best.mtry
+
+set.seed(3)
+rf.tuned <- randomForest(WRC. ~ ., data = data1 %>% select(-year),
+                         subset = train, mtry = best.mtry,
+                         ntree = 500, importance = TRUE)
+
+mse_rf_tuned <- mean( (predict(rf.tuned, mlb.test) - y.test)^2 )
+c(mse_bag = mse_bag, mse_rf = mse_rf, mse_rf_tuned = mse_rf_tuned)
+
+# Partial dependence plots give the marginal effect of a feature
+par(mfrow = c(1, 2))
+partialPlot(rf.tuned, pred.data = mlb.test, x.var = "isolated_power",
+            main = "PDP: isolated_power")
+partialPlot(rf.tuned, pred.data = mlb.test, x.var = "avg_swing_speed",
+            main = "PDP: avg_swing_speed")
+```
+
+
+```{r}
+#using 2024 data
+
+predictions <- predict(rf.tuned, mlb.train)
+players <- (mlb.train %>% filter(year==2024))$player.name
+actuals <- (mlb.train %>% filter(year==2024))$WRC.
+
+predict_2024_df <- data.frame(player = players, prediction = predictions, actual = actuals)
+predict_2024_df  <- predict_2024_df %>% mutate(diff = actuals - predictions)
+predict_2024_df <- predict_2024_df %>% mutate(year = 2024) %>% relocate(year, .before = prediction)
+predict_2024_df
+```
+
+```{r}
+#using 2025 data
+
+predictions <- predict(rf.tuned, mlb.test)
+players <- (data1 %>% filter(year==2025))$player.name
+actuals <- (data1 %>% filter(year==2025))$WRC.
+
+predict_2025_df <- data.frame(player = players, prediction = predictions, actual = actuals)
+predict_2025_df <- predict_2025_df %>% mutate(diff = actuals - predictions)
+predict_2025_df <- predict_2025_df %>% mutate(year = 2025) %>% relocate(year, .before = prediction)
+predict_2025_df
+```
