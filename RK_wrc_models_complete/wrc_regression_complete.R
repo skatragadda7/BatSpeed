@@ -388,6 +388,7 @@ LinReg.mod13 <- lm(WRC. ~ isolated_power
                    data = train)
 summary(LinReg.mod13)
 
+#final_model
 
 LinReg.mod14 <- lm(WRC. ~ isolated_power 
                    #+ barrel_batted_rate 
