@@ -282,7 +282,7 @@ server <- function(input, output, session) {
             ) +
             theme_minimal(base_size = 14) +
             theme(
-                text = element_text(color = "white"),
+                text = element_text(color = "black"),
                 axis.text = element_text(color = "gray80"),
                 panel.grid.major = element_line(color = "gray30"),
                 panel.grid.minor = element_blank()
@@ -360,8 +360,8 @@ server <- function(input, output, session) {
             scale_color_manual(values = c("Player" = "#0d6efd", "Cohort Avg" = "#6c757d")) +
             theme_minimal(base_size = 14) +
             theme(
-                text = element_text(color = "white"),
-                axis.text.x = element_text(size = 12, color = "white", face = "bold"),
+                text = element_text(color = "black"),
+                axis.text.x = element_text(size = 12, color = "black", face = "bold"),
                 axis.text.y = element_blank(),
                 panel.grid.major = element_line(color = "gray40", linetype = "dotted"),
                 legend.position = "bottom",
