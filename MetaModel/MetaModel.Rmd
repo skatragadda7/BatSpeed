@@ -1,0 +1,53 @@
+---
+title: "MetaCapstone"
+output:
+  pdf_document: default
+  html_document: default
+date: "2025-12-04"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Join Tables
+
+```{r}
+library(tidyverse)
+linpred <- read.csv('LinReg_predictions_2025.csv')
+linpred <- linpred %>% select(player,LinReg_pred_WRC.)
+rfpred <- read.csv('RF_predictions_2025.csv')
+rfpred <- rfpred %>% select(player,actual,RF_prediction)
+ridgepred <- read.csv('residuals_ridge_2025.csv')
+ridgepred <- ridgepred[!duplicated(ridgepred), ]
+
+data1 <- rfpred %>% left_join(linpred)
+data1 <- data1 %>% inner_join(ridgepred)
+```
+
+
+# Fit Model
+
+```{r}
+metamodel <- lm(actual~RF_prediction+LinReg_pred_WRC.+Ridge_predicted,data=data1)
+summary(metamodel)
+```
+
+```{r}
+predictions <- predict(metamodel)
+predictions
+
+data1 <- data1 %>% mutate(meta_predictions = predictions) %>% mutate(residual = actual-predictions)
+data1 <- data1 %>% select(player,actual,meta_predictions,residual)
+```
+
+
+
+```{r}
+mean(abs(data1$residual))
+```
+
+
+
+
