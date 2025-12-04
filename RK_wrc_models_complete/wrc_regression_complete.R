@@ -419,6 +419,7 @@ LinReg.mod13 <- lm(
 )
 summary(LinReg.mod13)
 
+#final_model
 
 LinReg.mod14 <- lm(
   WRC. ~ isolated_power
