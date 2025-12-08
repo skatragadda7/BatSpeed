@@ -49,5 +49,65 @@ mean(abs(data1$residual))
 ```
 
 
+# 2024 META-TRAINING DATA/STACKED
+
+
+linpred_2024 <- read.csv("~/Desktop/LinReg_predictions_2024.csv") %>%
+  select(player, LinReg_pred_WRC.)
+
+rfpred_2024 <- read.csv("~/Desktop/RF_predictions_2024.csv") %>%
+  select(player, actual, RF_prediction)
+
+ridgepred_2024 <- read.csv("~/Desktop/residuals_ridge_2024.csv") %>%
+  distinct()
+
+meta_train <- rfpred_2024 %>%
+  left_join(linpred_2024,  by = "player") %>%
+  left_join(ridgepred_2024, by = "player")
+
+# ==========================
+# 2025 META-TEST DATA
+# ==========================
+
+linpred_2025 <- read.csv("~/Desktop/LinReg_predictions_2025.csv") %>%
+  select(player, LinReg_pred_WRC.)
+
+rfpred_2025 <- read.csv("~/Desktop/RF_predictions_2025.csv") %>%
+  select(player, actual, RF_prediction)
+
+ridgepred_2025 <- read.csv("~/Desktop/residuals_ridge_2025.csv") %>%
+  distinct()
+
+meta_test <- rfpred_2025 %>%
+  left_join(linpred_2025,  by = "player") %>%
+  left_join(ridgepred_2025, by = "player")
+
+# Stacked Meta-Model
+# Train on 2024, test on 2025
+
+
+# Meta-learner trained on 2024 predictions
+metamodel <- lm(
+  actual ~ RF_prediction + LinReg_pred_WRC. + Ridge_predicted,
+  data = meta_train
+)
+
+summary(metamodel)
+
+# Use stacked meta-model to predict 2025
+meta_predictions_2025 <- predict(metamodel, newdata = meta_test)
+
+# Attach predictions and residuals for 2025
+meta_test <- meta_test %>%
+  mutate(
+    meta_predictions = meta_predictions_2025,
+    residual = actual - meta_predictions
+  ) %>%
+  select(player, actual, meta_predictions, residual)
+
+# Mean absolute error of stacked meta-model on 2025
+mean(abs(meta_test$residual))
+
+
 
 
