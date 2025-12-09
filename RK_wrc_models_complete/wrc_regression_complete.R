@@ -26,8 +26,8 @@ library(yardstick)
 # relocate(wRC., .before = "k_percent") %>%
 # rename(WRC. = wRC.) %>% distinct()
 
-# head(df)
-
+head(df)
+count(df)
 df <- read.csv("onlyCompleteData.csv")
 
 
@@ -36,7 +36,6 @@ test <- df %>% filter(year == "2025")
 
 train <- train %>% select(-c(player.name:player_age), WRC.)
 test <- test %>% select(-c(player.name:player_age), WRC.)
-
 # Exploratory Data Analysis
 
 train.cor <- train %>%
@@ -48,7 +47,6 @@ wrc_corrs <- train.cor %>%
   select(term, WRC.) %>%
   arrange(desc(abs(WRC.)))
 wrc_corrs
-
 
 train %>%
   ggplot(aes(x = .data[[wrc_corrs$term[1]]], y = WRC.)) +
@@ -553,7 +551,7 @@ ggplot(prediction_data_2025, aes(x = WRC., y = pred_WRC.)) +
   # Create a diagonal line:
   geom_abline(lty = 2) +
   geom_point(alpha = 0.5) +
-  labs(y = "Predicted WRC.", x = "WRC.", title = "Predictions for 2025") +
+  labs(y = "Lin Reg Predicted WRC.", x = "Lin Reg Actual WRC.", title = "Linear Regression Predictions for 2025") +
   # Scale and size the x- and y-axis uniformly:
   coord_obs_pred()
 
@@ -587,6 +585,13 @@ ridge_prediction_data_2025 <- df %>%
   mutate(errors = WRC. - pred_WRC.) %>%
   mutate(sum_pred_error = pred_WRC. + errors) %>%
   mutate(check = (sum_pred_error == WRC.))
+ggplot(ridge_prediction_data_2025, aes(x = WRC., y = pred_WRC.)) +
+  # Create a diagonal line:
+  geom_abline(lty = 2) +
+  geom_point(alpha = 0.5) +
+  labs(y = " Ridge Predicted WRC.", x = "Ridge Actual WRC.", title = "Ridge Predictions for 2025") +
+  # Scale and size the x- and y-axis uniformly:
+  coord_obs_pred()
 
 cat("\n=== Model Comparison: LinReg.mod14 vs Ridge (2025 Test) ===\n")
 comparison_2025 <- data.frame(
@@ -625,7 +630,7 @@ prediction_data_2024 <- prediction_data_2024 %>%
     WRC._above_mean = as.factor(WRC._above_mean),
     pred_WRC._above_mean = as.factor(pred_WRC._above_mean)
   )
-
+count(prediction_data_2024)
 
 conf_mat(prediction_data_2024, truth = `WRC._above_mean`, estimate = `pred_WRC._above_mean`)
 
@@ -655,7 +660,7 @@ prediction_data_2025 <- prediction_data_2025 %>%
     WRC._above_mean = as.factor(WRC._above_mean),
     pred_WRC._above_mean = as.factor(pred_WRC._above_mean)
   )
-
+count(prediction_data_2025)
 
 conf_mat(prediction_data_2025, truth = `WRC._above_mean`, estimate = `pred_WRC._above_mean`)
 
@@ -678,7 +683,7 @@ conf_mat(prediction_data_2025, truth = `WRC._above_mean`, estimate = `pred_WRC._
 RF_predictions_2024 <- read.csv("RF_predictions_2024.csv")
 
 RF_predictions_2025 <- read.csv("RF_predictions_2025.csv")
-
+count(RF_predictions_2024)
 
 # 2024
 
@@ -733,10 +738,17 @@ RF_metrics_2025 <- ames_metrics(RF_predictions_2025, truth = actual, estimate = 
 Ridge_metrics_2025 <- data.frame(
   .metric = c("rmse", "rsq", "mae"),
   .estimator = c("standard", "standard", "standard"),
-  .estimate = c(ridge_test_rmse, ridge_test_r2, ridge_test_mae)
-)
-
-
+  .estimate = c(ridge_test_rmse, ridge_test_r2, ridge_test_mae))
+ridge_predictions_2025_1 <- ridge_prediction_data_2025 %>%
+  transmute(
+    player     = player.name,
+    actual     = WRC.,
+    prediction = pred_WRC.,
+    diff       = actual - prediction
+  )
+write.csv(ridge_predictions_2025_1,
+          "Ridge_predictions_2025_1.csv",
+          row.names = FALSE)
 model_comparisons <- data.frame(
   Model = c("Linear Regression", "Linear Regression", "Ridge"),
   Year = c("2024", "2025", "2025"),
@@ -766,5 +778,6 @@ model_comparisons_pivoted <- model_comparisons %>%
     values_from = Value
   ) %>%
   arrange(Metric, Model)
+
 
 model_comparisons_pivoted
